@@ -62,7 +62,7 @@ static class App
         while (opts.ApiId is null)
             if (int.TryParse(ConsoleUi.Prompt("api_id: "), out var id)) opts.ApiId = id;
         while (string.IsNullOrWhiteSpace(opts.ApiHash))
-            opts.ApiHash = ConsoleUi.Prompt("api_hash: ");
+            opts.ApiHash = ConsoleUi.ReadSecret("api_hash (hidden while typing): ").Trim();
         while (opts.CutoffUtc is null)
         {
             try
@@ -87,6 +87,9 @@ static class App
             "api_hash" => opts.ApiHash,
             "session_pathname" => session.SessionPath,
             "session_key" => session.SessionKey,
+            // When resuming a kept session without a phone number, accept whichever account it belongs to
+            // ("Logged in as …" is printed right after) instead of asking for the number just to compare it.
+            "user_id" => opts.Phone is null ? "-1" : null,
             "phone_number" => opts.Phone ??= ConsoleUi.Prompt("Phone number in international format (e.g. +15551234567): "),
             "verification_code" => ConsoleUi.Prompt("Login code Telegram sent you: "),
             "email" => ConsoleUi.Prompt("Login email: "),
@@ -104,7 +107,7 @@ static class App
         {
             Status.StartHeartbeat();
             Status.SetActivity("connecting and logging in to Telegram");
-            var me = await client.LoginUserIfNeeded();
+            var me = await LoginAsync(client, opts);
             Status.Info($"Logged in as {TargetEnumerator.DisplayName(me)}{(me.MainUsername is { } u ? " @" + u : "")} (id {me.id}).");
             var tlConfig = client.TLConfig ?? await Retry.RunAsync(() => client.Help_GetConfig());
             return await RunLoggedInAsync(client, me, tlConfig, opts, cutoff, store);
@@ -114,6 +117,26 @@ static class App
             // Cleanup never throws, so it cannot hide the real outcome of the run.
             await session.CleanupAsync();
         }
+    }
+
+    static async Task<User> LoginAsync(Client client, Options opts)
+    {
+        await client.ConnectAsync();
+        if (client.UserId != 0)
+            return await client.LoginUserIfNeeded(); // a kept session (--session) is resumed, no new login
+
+        var method = opts.Login ?? (opts.Phone is not null || Console.IsInputRedirected
+            ? LoginMethod.Code
+            : ConsoleUi.AskLoginMethod());
+        if (method == LoginMethod.Code)
+            return await client.LoginUserIfNeeded();
+
+        // No heartbeat lines while the QR code is on screen: they would scroll it away.
+        using var quiet = Status.Suspend();
+        Status.Info("Logging in with a QR code. Waiting for you to scan it…");
+        var me = await client.LoginWithQRCode(ConsoleUi.ShowQr, logoutFirst: false)
+            ?? throw new OperationCanceledException("QR login was cancelled.");
+        return me;
     }
 
     static async Task<int> RunLoggedInAsync(Client client, User me, TL.Config tlConfig, Options opts, DateTime cutoff, BackupStore store)

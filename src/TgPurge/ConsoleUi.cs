@@ -31,6 +31,74 @@ public static class ConsoleUi
         return sb.ToString();
     }
 
+    /// <summary>Asks how to log in; QR is the default because it needs no login code to be delivered.</summary>
+    public static LoginMethod AskLoginMethod()
+    {
+        while (true)
+        {
+            var a = Prompt("How do you want to log in?\n" +
+                "  [Q] QR code: scan it with the Telegram app on your phone (no login code needed) — default\n" +
+                "  [C] phone number and a login code sent by Telegram\n" +
+                "Choice [Q/c]: ").ToLowerInvariant();
+            if (a is "" or "q" or "qr") return LoginMethod.Qr;
+            if (a is "c" or "code") return LoginMethod.Code;
+        }
+    }
+
+    /// <summary>
+    /// Renders <paramref name="text"/> as a QR code, two modules per character row (▀ ▄ █), including the quiet zone.
+    /// Dark modules are drawn with the glyphs, so it must be printed dark-on-light (see <see cref="ShowQr"/>).
+    /// </summary>
+    public static IReadOnlyList<string> QrLines(string text)
+    {
+        using var generator = new QRCoder.QRCodeGenerator();
+        using var data = generator.CreateQrCode(text, QRCoder.QRCodeGenerator.ECCLevel.L);
+        var m = data.ModuleMatrix; // already includes the 4-module quiet zone
+        int size = m.Count;
+        var lines = new List<string>();
+        for (int y = 0; y < size; y += 2)
+        {
+            var sb = new StringBuilder(size);
+            for (int x = 0; x < size; x++)
+            {
+                bool top = m[y][x], bottom = y + 1 < size && m[y + 1][x];
+                sb.Append((top, bottom) switch
+                {
+                    (true, true) => '█',
+                    (true, false) => '▀',
+                    (false, true) => '▄',
+                    _ => ' ',
+                });
+            }
+            lines.Add(sb.ToString());
+        }
+        return lines;
+    }
+
+    static int _qrShown;
+
+    /// <summary>Prints a login QR code black-on-white, so it scans the same on dark and light terminals.</summary>
+    public static void ShowQr(string loginUrl)
+    {
+        Status.EndProgress();
+        Console.WriteLine();
+        if (Interlocked.Increment(ref _qrShown) > 1)
+            Console.WriteLine("The previous QR code expired. Scan this NEW one:");
+        Console.WriteLine("On your phone: Telegram → Settings → Devices → Link Desktop Device, then point the camera at this code.");
+        Console.WriteLine("(It is replaced by a new code every 30 seconds or so until you scan it. Ctrl+C cancels.)");
+        Console.WriteLine();
+        foreach (var line in QrLines(loginUrl))
+        {
+            Console.Write("  ");
+            Console.BackgroundColor = ConsoleColor.White;
+            Console.ForegroundColor = ConsoleColor.Black;
+            Console.Write(line);
+            Console.ResetColor();
+            Console.WriteLine();
+        }
+        Console.WriteLine();
+    }
+
     public static void Banner(string text, ConsoleColor color = ConsoleColor.Cyan)
     {
         Status.EndProgress();

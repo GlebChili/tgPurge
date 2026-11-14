@@ -78,15 +78,26 @@ Run `--help` for all options. Useful ones:
 |---|---|
 | `--cutoff <date\|now>` | delete messages sent strictly before this moment (`yyyy-MM-dd` = local midnight) |
 | `--except <chat>` / `--except-file <path>` | chats left completely untouched — neither backed up nor purged (id as shown in the chat table, e.g. `user:123`, a bare or Bot-API id, `@username`, exact title). Every exception must match exactly one chat or the tool refuses to run. Excluding a supergroup also keeps its pre-upgrade history; excluding a channel also keeps your comments under it. |
+| `--login qr\|code` | `qr`: scan a QR code in the Telegram app (Settings → Devices → Link Desktop Device); no login code is sent. `code`: phone number + login code. Asked interactively if omitted (QR is the default). |
 | `--dry-run` | back up + verify + report what would be deleted; delete nothing |
 | `--yes-i-understand-this-is-irreversible` | no interactive prompts (disclaimer still printed) |
 | `--keep-session` / `--session <path>` | by default the session is temporary and logged out at exit |
 
 To build a standalone binary: `dotnet publish src/TgPurge -c Release -o out`.
 
+### The login code never arrives
+
+If you are already logged in to Telegram on another device, Telegram does not send the code by SMS: it sends it as
+a message from the verified **"Telegram"** service account inside the app (look in Archived Chats too). If it is not
+there either, use **QR login** (`--login qr`, the default when asked): tgPurge shows a QR code in the terminal and you
+scan it from Telegram → Settings → Devices → Link Desktop Device, so no code has to be delivered. Avoid requesting
+codes over and over: Telegram then blocks login attempts for that number for a while (`FLOOD_WAIT`). Never forward
+or paste a login code into any chat — Telegram cancels codes that have been shared.
+
 ## What it does
 
-1. **Login** (phone, code, 2FA password). By default the session lives in a private temporary folder and is
+1. **Login** by QR code (scanned in the Telegram app on your phone) or by phone number and login code, then the
+   2FA password if you have one. The `api_hash` and the password are not echoed while you type. By default the session lives in a private temporary folder and is
    encrypted with a random key that exists only in memory for this run. It is logged out and deleted at exit,
    including on Ctrl+C, SIGTERM, terminal close (SIGHUP) and SIGQUIT; a second Ctrl+C forces an immediate quit.
 2. **Discover** every dialog — main list *and* archive — plus Saved Messages, the comments groups linked to

@@ -2,8 +2,11 @@ using System.Globalization;
 
 namespace TgPurge;
 
+public enum LoginMethod { Qr, Code }
+
 public sealed class Options
 {
+    public LoginMethod? Login { get; set; }
     public DateTime? CutoffUtc { get; set; }
     public string? CutoffInput { get; set; }
     public List<string> Exceptions { get; } = [];
@@ -42,6 +45,13 @@ public sealed class Options
           --api-id <id>           or env TGPURGE_API_ID
           --api-hash <hash>       or env TGPURGE_API_HASH
           --phone <+number>       or env TGPURGE_PHONE (otherwise prompted)
+
+        Login:
+          --login qr              Show a QR code to scan in the Telegram app (Settings → Devices → Link Desktop Device).
+                                  No login code is sent, so this works when the code never arrives.
+          --login code            Enter your phone number and the login code Telegram sends you.
+                                  If --login is omitted you are asked (QR is the default; code if --phone is given
+                                  or input is not a terminal).
 
         Other options:
           --dry-run               Back up and verify, show exactly what would be deleted, delete nothing.
@@ -85,6 +95,14 @@ public sealed class Options
                     break;
                 case "--api-hash": o.ApiHash = Next(); break;
                 case "--phone": o.Phone = Next(); break;
+                case "--login":
+                    o.Login = Next().ToLowerInvariant() switch
+                    {
+                        "qr" => LoginMethod.Qr,
+                        "code" => LoginMethod.Code,
+                        _ => throw new ArgumentException("--login must be \"qr\" or \"code\"."),
+                    };
+                    break;
                 case "--dry-run": o.DryRun = true; break;
                 case ConfirmFlag: o.AssumeYes = true; break;
                 case "--session": o.SessionPath = Next(); break;

@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="WTelegramClient" Version="4.4.10" />
   </ItemGroup>
 
