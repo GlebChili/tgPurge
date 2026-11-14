@@ -226,3 +226,12 @@ session handling, status output, and the "no delete-for-me" source guard. Histor
 purge itself are tested against an in-memory fake Telegram (`tests/TgPurge.Tests/FakeTelegram.cs`) that answers
 like the real API (sliced pages, channel pages, deleted messages as empty). The tool has **not** yet been run
 against a live account; before relying on it, test on two throwaway accounts.
+
+## Security
+
+Please report security problems privately to **security@krasilich.net**, not in public issues.
+See [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © 2026 Gleb Krasilich
