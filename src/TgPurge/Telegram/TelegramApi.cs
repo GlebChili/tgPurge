@@ -22,6 +22,11 @@ public interface ITelegramApi
     Task<Storage_FileType> DownloadPhotoAsync(Photo photo, Stream output, Client.ProgressCallback progress);
     Task DownloadDocumentAsync(Document document, Stream output, Client.ProgressCallback progress);
     /// <summary>
+    /// Ends every download in progress from data center <paramref name="dcId"/> by closing the media connection to it.
+    /// The stuck downloads fail; the next download opens a new connection.
+    /// </summary>
+    Task AbortMediaDownloadsAsync(int dcId);
+    /// <summary>
     /// Deletes messages for ALL participants. This is the only deletion entry point in tgPurge:
     /// messages.deleteMessages with revoke=true (private chats, basic groups) or channels.deleteMessages
     /// (supergroups/channels, always for everyone). Nothing is ever deleted "for me only".
@@ -57,6 +62,15 @@ public sealed class TelegramApi(Client client) : ITelegramApi
 
     public Task DownloadDocumentAsync(Document document, Stream output, Client.ProgressCallback progress) =>
         client.DownloadFileAsync(document, output, (PhotoSizeBase?)null, progress);
+
+    public async Task AbortMediaDownloadsAsync(int dcId)
+    {
+        // WTelegram downloads files over a separate media connection per data center (a negative DC id). Disposing it
+        // fails its pending requests, which ends a download that is waiting for an answer that never comes. The library
+        // replaces a client whose connection is closed the next time a file is needed from that data center.
+        var media = await client.GetClientForDC(-Math.Abs(dcId), connect: false);
+        if (!ReferenceEquals(media, client)) await media.DisposeAsync();
+    }
 
     public Task DeleteForEveryoneAsync(InputChannelBase? channel, int[] ids) =>
         channel is not null

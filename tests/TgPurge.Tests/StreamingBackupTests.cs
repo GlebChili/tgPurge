@@ -116,6 +116,60 @@ public sealed class StreamingBackupTests : IDisposable
         Assert.True(_store.ReadMessages(chat).Single(m => m.Id == 3).IsOwn);
     }
 
+    static (TelegramTarget Target, FakeTelegram Tg) ChatWithOnePhoto()
+    {
+        var tg = new FakeTelegram();
+        var m = FakeTelegram.Msg(1, T0, own: true, text: "a photo");
+        m.media = new MessageMediaPhoto { photo = new Photo { id = 77, dc_id = 4 } };
+        m.flags |= Message.Flags.has_media;
+        tg.History["user:5"] = [m];
+        var target = new TelegramTarget(new ChatInfo(5, ChatKind.Private, "Bob", null, DeleteScope.Everyone, ""), new InputPeerUser(5, 0), null);
+        return (target, tg);
+    }
+
+    BackupRunner FastRunner(FakeTelegram tg) => new(tg, new TargetDiscovery(), _store, Unlimited, _ => { })
+    {
+        StallTimeout = TimeSpan.FromMilliseconds(200),
+        AbortGrace = TimeSpan.FromMilliseconds(200),
+        RetryDelay = TimeSpan.FromMilliseconds(10),
+    };
+
+    [Fact]
+    public async Task A_stalled_media_download_is_aborted_and_retried()
+    {
+        // Regression: a download that never received a byte kept the backup waiting forever.
+        var (target, tg) = ChatWithOnePhoto();
+        tg.HangingPhotoDownloads = 1;
+
+        var backup = FastRunner(tg).BackupChatAsync(target, DateTime.UtcNow, cutoffUtc: T0.AddDays(1));
+        Assert.Same(backup, await Task.WhenAny(backup, Task.Delay(TimeSpan.FromSeconds(20))));
+        var chat = await backup;
+
+        Assert.Equal([4], tg.AbortedDcs);
+        var rec = _store.ReadMessages(chat).Single();
+        Assert.Equal(MediaStatus.Downloaded, rec.MediaStatus);
+        Assert.True(Verify(chat).Ok);
+        Assert.Empty(Directory.GetFiles(Path.Combine(_store.ChatDir(chat), BackupStore.MediaDir), "*.download"));
+    }
+
+    [Fact]
+    public async Task A_download_that_never_recovers_fails_the_chat_instead_of_hanging()
+    {
+        var (target, tg) = ChatWithOnePhoto();
+        tg.HangingPhotoDownloads = int.MaxValue;
+        tg.HangsSurviveAbort = true; // even closing the connection does not end it: the download is abandoned
+
+        var backup = FastRunner(tg).BackupChatAsync(target, DateTime.UtcNow, cutoffUtc: T0.AddDays(1));
+        Assert.Same(backup, await Task.WhenAny(backup, Task.Delay(TimeSpan.FromSeconds(20))));
+        var chat = await backup;
+
+        var rec = _store.ReadMessages(chat).Single();
+        Assert.Equal(MediaStatus.Failed, rec.MediaStatus);
+        Assert.Contains("stalled", rec.MediaError);
+        Assert.False(Verify(chat).Ok); // so the chat is not purged
+        Assert.Equal(4, tg.AbortedDcs.Count); // every attempt was aborted
+    }
+
     [Fact]
     public async Task Only_messages_this_run_deletes_are_backed_up()
     {

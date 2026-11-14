@@ -11,6 +11,13 @@ namespace TgPurge.Telegram;
 /// </summary>
 public sealed class BackupRunner(ITelegramApi api, TargetDiscovery dir, BackupStore store, TL.Config tlConfig, Action<string> log)
 {
+    /// <summary>A download that receives no data for this long is aborted and counts as a failed attempt.</summary>
+    public TimeSpan StallTimeout { get; init; } = TimeSpan.FromMinutes(2);
+    /// <summary>How long an aborted download may take to wind down before it is abandoned.</summary>
+    public TimeSpan AbortGrace { get; init; } = TimeSpan.FromSeconds(30);
+    /// <summary>Pause before retry n of a failed media download is n times this.</summary>
+    public TimeSpan RetryDelay { get; init; } = TimeSpan.FromSeconds(2);
+
     public async Task<ChatBackup> BackupChatAsync(TelegramTarget target, DateTime exportedUtc, DateTime cutoffUtc)
     {
         var info = target.Info;
@@ -91,6 +98,47 @@ public sealed class BackupRunner(ITelegramApi api, TargetDiscovery dir, BackupSt
         Status.Progress(total > 0
             ? $"{_mediaLabel} — {Storage.Human(transmitted)} / {Storage.Human(total)} ({transmitted * 100 / total}%)"
             : $"{_mediaLabel} — {Storage.Human(transmitted)}");
+
+    /// <summary>
+    /// Runs a download, aborting it when no data arrives for <see cref="StallTimeout"/>. Without this, a request that
+    /// Telegram never answers keeps the backup waiting forever. The abort throws <see cref="TimeoutException"/>, which
+    /// the caller treats like any failed attempt (retried, and the chat does not verify if every attempt fails).
+    /// </summary>
+    async Task<T> WithStallTimeoutAsync<T>(Func<WTelegram.Client.ProgressCallback, Task<T>> download, int dcId, int messageId)
+    {
+        long lastBytes = -1;
+        long lastChangeTicks = Environment.TickCount64;
+        void OnProgress(long transmitted, long total)
+        {
+            if (Interlocked.Exchange(ref lastBytes, transmitted) != transmitted)
+                Interlocked.Exchange(ref lastChangeTicks, Environment.TickCount64);
+            ReportBytes(transmitted, total);
+        }
+
+        var task = download(OnProgress);
+        var check = TimeSpan.FromMilliseconds(Math.Clamp(StallTimeout.TotalMilliseconds / 4, 10, 5000));
+        while (true)
+        {
+            if (await Task.WhenAny(task, Task.Delay(check)) == task) return await task;
+            var quiet = TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref lastChangeTicks));
+            if (quiet < StallTimeout) continue;
+
+            log($"media download for message #{messageId} received no data for {quiet.TotalSeconds:0}s; aborting it");
+            try
+            {
+                await api.AbortMediaDownloadsAsync(dcId);
+            }
+            catch (Exception ex)
+            {
+                log($"could not close the media connection to DC {dcId}: {ex.Message}");
+            }
+            // Give the aborted download a moment to fail so it stops writing; if it still hangs, abandon it.
+            if (await Task.WhenAny(task, Task.Delay(AbortGrace)) != task)
+                log($"download for message #{messageId} did not stop after the abort; abandoning it");
+            _ = task.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            throw new TimeoutException($"no data received for {Status.Human(quiet)} (download stalled)");
+        }
+    }
 
     MessageRecord ToRecord(MessageBase m)
     {
@@ -210,7 +258,7 @@ public sealed class BackupRunner(ITelegramApi api, TargetDiscovery dir, BackupSt
                 Status.Warn($"    media of message #{msg.id} failed ({ex.Message}); " +
                     (i < attempts ? $"retry {i}/{attempts - 1} shortly…" : "giving up — this chat will not verify"));
                 if (i == attempts) return;
-                await Task.Delay(TimeSpan.FromSeconds(2 * i));
+                await Task.Delay(RetryDelay * i);
                 // File references expire; re-fetching the message yields a fresh one.
                 if (ex is RpcException)
                 {
@@ -246,7 +294,7 @@ public sealed class BackupRunner(ITelegramApi api, TargetDiscovery dir, BackupSt
                     Storage_FileType type;
                     await using (var fs = Storage.RetryOnTransientLock(() => Storage.CreatePrivateFile(tmp)))
                     {
-                        type = await api.DownloadPhotoAsync(photo, fs, ReportBytes);
+                        type = await WithStallTimeoutAsync(p => api.DownloadPhotoAsync(photo, fs, p), photo.dc_id, msg.id);
                         fs.Flush(flushToDisk: true);
                     }
                     finalName = BackupStore.MediaFileName(msg.id, "photo", ExtensionFor(type));
@@ -258,7 +306,8 @@ public sealed class BackupRunner(ITelegramApi api, TargetDiscovery dir, BackupSt
                     Storage.EnsureRoom(doc.size, Storage.AvailableBytes(chatDir), $"file of message #{msg.id}");
                     await using (var fs = Storage.RetryOnTransientLock(() => Storage.CreatePrivateFile(tmp)))
                     {
-                        await api.DownloadDocumentAsync(doc, fs, ReportBytes);
+                        await WithStallTimeoutAsync(async p => { await api.DownloadDocumentAsync(doc, fs, p); return 0; },
+                            doc.dc_id, msg.id);
                         fs.Flush(flushToDisk: true);
                     }
                     expected = doc.size;

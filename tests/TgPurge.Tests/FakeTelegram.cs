@@ -128,8 +128,41 @@ public sealed class FakeTelegram : ITelegramApi
 
     List<MessageBase> Pool(InputChannelBase? channel) => Lists(channel).SelectMany(l => l).ToList();
 
-    public Task<Storage_FileType> DownloadPhotoAsync(Photo photo, Stream output, WTelegram.Client.ProgressCallback progress) =>
-        throw new NotSupportedException();
+    /// <summary>How many photo downloads hang (no data, never finishing) before downloads start to work.</summary>
+    public int HangingPhotoDownloads { get; set; }
+    /// <summary>Whether a hanging download ends when its media connection is closed (like WTelegram) or ignores it.</summary>
+    public bool HangsSurviveAbort { get; set; }
+    public List<int> AbortedDcs { get; } = [];
+    readonly List<TaskCompletionSource> _hanging = [];
+
+    public async Task<Storage_FileType> DownloadPhotoAsync(Photo photo, Stream output, WTelegram.Client.ProgressCallback progress)
+    {
+        progress(0, 0);
+        if (HangingPhotoDownloads > 0)
+        {
+            HangingPhotoDownloads--;
+            var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_hanging) _hanging.Add(hang);
+            await hang.Task; // only an abort ends it
+        }
+        var bytes = new byte[1000];
+        Random.Shared.NextBytes(bytes);
+        await output.WriteAsync(bytes);
+        progress(bytes.Length, bytes.Length);
+        return Storage_FileType.jpeg;
+    }
+
+    public Task AbortMediaDownloadsAsync(int dcId)
+    {
+        AbortedDcs.Add(dcId);
+        if (!HangsSurviveAbort)
+            lock (_hanging)
+            {
+                foreach (var h in _hanging) h.TrySetException(new ObjectDisposedException("WTelegram.Client was disposed"));
+                _hanging.Clear();
+            }
+        return Task.CompletedTask;
+    }
 
     public Task DownloadDocumentAsync(Document document, Stream output, WTelegram.Client.ProgressCallback progress) =>
         throw new NotSupportedException();
