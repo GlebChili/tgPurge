@@ -64,6 +64,35 @@ public sealed class TelegramLogicTests : IDisposable
     static HashSet<int> All(IEnumerable<MessageBase> m) => m.Select(x => x.ID).ToHashSet();
 
     [Fact]
+    public async Task Purge_is_incomplete_when_the_final_reread_is_short()
+    {
+        // Telegram counts 250 messages but never returns #120: the purge must not report the chat as clean.
+        var msgs = Messages(250);
+        _tg.History["channel:9"] = msgs;
+        _tg.CountedButNeverReturned.Add(120);
+
+        var r = await new Purger(_tg, _dir, Unlimited, _ => { })
+            .PurgeAsync(Supergroup(9, DeleteScope.Everyone), All(msgs), Cutoff, dryRun: false);
+
+        Assert.False(r.Complete);
+        Assert.Contains(r.Errors, e => e.StartsWith("final re-read:", StringComparison.Ordinal) && e.Contains("only 0 could be read"));
+        Assert.Contains(r.Errors, e => e.StartsWith("first scan:", StringComparison.Ordinal));
+        Assert.Empty(r.Remaining); // what was read is clean; the error is the only signal, so it must be there
+    }
+
+    [Fact]
+    public async Task Purge_of_a_fully_read_chat_reports_no_short_read()
+    {
+        var msgs = Messages(250);
+        _tg.History["channel:9"] = msgs;
+
+        var r = await new Purger(_tg, _dir, Unlimited, _ => { })
+            .PurgeAsync(Supergroup(9, DeleteScope.Everyone), All(msgs), Cutoff, dryRun: false);
+
+        Assert.True(r.Complete, string.Join("; ", r.Errors));
+    }
+
+    [Fact]
     public async Task Private_chat_purge_deletes_both_sides_before_cutoff_only()
     {
         var msgs = Messages(300);                                   // 300 days before the cut-off…

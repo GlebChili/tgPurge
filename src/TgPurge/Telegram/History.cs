@@ -4,7 +4,16 @@ using WTelegram;
 namespace TgPurge.Telegram;
 
 /// <summary>What Telegram said about a chat's size, and how many messages were actually read.</summary>
-public sealed record HistoryStats(int Fetched, int? ReportedCount, bool Inexact);
+public sealed record HistoryStats(int Fetched, int? ReportedCount, bool Inexact)
+{
+    /// <summary>
+    /// True when fewer messages were read than Telegram said the chat holds, so the read cannot be trusted as complete.
+    /// An approximate ("inexact") count is not evidence of a short read. Comments groups are read with a search for
+    /// the user's own comments, whose count is not compared (the same rule the backup verifier has always used).
+    /// </summary>
+    public static bool IsShortRead(int fetched, int? reported, bool inexact, ChatKind kind) =>
+        reported is int r && !inexact && fetched < r && kind != ChatKind.DiscussionComments;
+}
 
 public static class History
 {

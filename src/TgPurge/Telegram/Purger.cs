@@ -31,7 +31,7 @@ public sealed class Purger(ITelegramApi api, TargetDiscovery dir, TL.Config tlCo
 
         // One full scan of the chat decides what to delete. Own messages are recognised by Telegram's "outgoing" flag
         // on each message, not by a search on the sender, because channel posts and some group messages carry no sender.
-        var server = await CurrentMessagesAsync(target);
+        var server = await CurrentMessagesAsync(target, result, "first scan");
         var plan = PurgePlanner.Plan(target.Info.Scope, server, cutoffUtc, verifiedIds, revokeWindow, DateTime.UtcNow);
         result.NotBackedUp.AddRange(plan.NotBackedUp);
         result.BeyondRevokeWindow.AddRange(plan.BeyondRevokeWindow);
@@ -86,7 +86,7 @@ public sealed class Purger(ITelegramApi api, TargetDiscovery dir, TL.Config tlCo
         // Independent final check: re-read the whole chat from Telegram and plan again. This also catches anything
         // the first scan missed, not just the messages that were planned.
         Status.Info("    re-reading the chat to confirm nothing in scope is left…");
-        var after = await CurrentMessagesAsync(target);
+        var after = await CurrentMessagesAsync(target, result, "final re-read");
         var finalPlan = PurgePlanner.Plan(target.Info.Scope, after, cutoffUtc, verifiedIds, revokeWindow, DateTime.UtcNow);
         result.Remaining.AddRange(finalPlan.ToDelete);
         result.NotBackedUp.Clear(); result.NotBackedUp.AddRange(finalPlan.NotBackedUp);
@@ -97,13 +97,22 @@ public sealed class Purger(ITelegramApi api, TargetDiscovery dir, TL.Config tlCo
         return result;
     }
 
-    /// <summary>Every message of the chat currently on the server (own comments only, for comments groups).</summary>
-    async Task<List<ServerMessage>> CurrentMessagesAsync(TelegramTarget target)
+    /// <summary>Every message of the chat currently on the server (own comments only, for comments groups).
+    /// A read that returns fewer messages than Telegram reports is recorded as an error, so the chat is never
+    /// reported as fully purged on the strength of a history that was not read completely.</summary>
+    async Task<List<ServerMessage>> CurrentMessagesAsync(TelegramTarget target, ChatPurgeResult result, string stage)
     {
         // Only id, date and ownership are kept per message, so even huge chats fit comfortably in memory.
-        var (messages, _) = await History.ScanAsync(api, target, dir,
+        var (messages, stats) = await History.ScanAsync(api, target, dir,
             n => Status.Progress($"    scanning the chat: {n} messages so far…"));
         Status.EndProgress();
+        if (HistoryStats.IsShortRead(stats.Fetched, stats.ReportedCount, stats.Inexact, target.Info.Kind))
+        {
+            var error = $"{stage}: Telegram reported {stats.ReportedCount} messages but only {stats.Fetched} could be read; " +
+                "messages that were not read may still be on Telegram";
+            result.Errors.Add(error);
+            log($"    ✗ {error}");
+        }
         return messages;
     }
 

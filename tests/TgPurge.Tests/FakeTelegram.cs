@@ -20,6 +20,8 @@ public sealed class FakeTelegram : ITelegramApi
     /// <summary>Ids hidden from the first full scan of their chat (to simulate a scan that misses messages).</summary>
     public HashSet<int> HiddenOnFirstScan { get; } = [];
     readonly Dictionary<string, int> _scans = [];
+    /// <summary>Ids never returned by history reads but still included in the reported count (a short read).</summary>
+    public HashSet<int> CountedButNeverReturned { get; } = [];
     /// <summary>Ids whose deletion Telegram refuses.</summary>
     public HashSet<int> Undeletable { get; } = [];
 
@@ -74,8 +76,10 @@ public sealed class FakeTelegram : ITelegramApi
         bool firstScan = _scans.GetValueOrDefault(key) <= 1;
         var all = History.GetValueOrDefault(key) ?? [];
         var visible = all.Where(m => !(firstScan && HiddenOnFirstScan.Contains(m.ID))).OrderByDescending(m => m.ID).ToList();
+        int reported = visible.Count;
+        visible.RemoveAll(m => CountedButNeverReturned.Contains(m.ID));
         var page = visible.Where(m => offsetId == 0 || m.ID < offsetId).Take(limit).ToArray();
-        return Task.FromResult(Wrap(key, page, visible.Count, limit));
+        return Task.FromResult(Wrap(key, page, reported, limit));
     }
 
     public Task<Messages_MessagesBase> SearchOwnAsync(InputPeer peer, int offsetId, int limit)

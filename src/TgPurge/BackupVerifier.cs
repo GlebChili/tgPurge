@@ -107,9 +107,8 @@ public static class BackupVerifier
         // Reading the chat must have been complete, or messages to delete could be missing from the backup.
         // (Only a subset is backed up, so the check is on what was read, not on what was saved.)
         // A short read is only acceptable when Telegram itself said the count was approximate.
-        if (chat.ServerReportedCount is int reported && !chat.ServerCountInexact && chat.MessagesScanned < reported
-            && chat.Kind != ChatKind.DiscussionComments)
-            problems.Add($"Telegram reported {reported} messages but only {chat.MessagesScanned} could be read");
+        if (Telegram.HistoryStats.IsShortRead(chat.MessagesScanned, chat.ServerReportedCount, chat.ServerCountInexact, chat.Kind))
+            problems.Add($"Telegram reported {chat.ServerReportedCount} messages but only {chat.MessagesScanned} could be read");
         if (count > chat.MessagesScanned && chat.MessagesScanned > 0)
             problems.Add($"backup holds {count} messages but only {chat.MessagesScanned} were read");
 
