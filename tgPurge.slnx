@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TgPurge/TgPurge.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TgPurge.Tests/TgPurge.Tests.csproj" />
+  </Folder>
+</Solution>

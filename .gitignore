@@ -1,0 +1,9 @@
+bin/
+obj/
+*.user
+.vs/
+.idea/
+
+# Never commit backups or Telegram sessions: they contain private conversations / account access.
+tgBacups/
+*.session
