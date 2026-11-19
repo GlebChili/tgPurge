@@ -15,7 +15,9 @@ public static class Report
         sb.AppendLine($"- Backup: `{backupRoot}`");
         sb.AppendLine($"- Cut-off: {ConsoleUi.Local(cutoffUtc)}");
         sb.AppendLine($"- Finished: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
-        sb.AppendLine($"- Chats backed up: {verifications.Count}, verified OK: {verifications.Count(v => v.Ok)}");
+        sb.AppendLine($"- Chats backed up: {verifications.Count}, fully verified: {verifications.Count(v => v.Ok)}, " +
+            $"partly verified: {verifications.Count(v => !v.Ok && v.VerifiedIds.Count > 0)}, " +
+            $"not verified: {verifications.Count(v => !v.Ok && v.VerifiedIds.Count == 0)}");
         if (!dryRun)
             sb.AppendLine($"- Messages deleted for everyone: {results.Sum(r => r.Deleted)}");
         sb.AppendLine();
@@ -23,18 +25,39 @@ public static class Report
         var critical = new List<string>();
         foreach (var i in inaccessible)
             critical.Add($"not processed — {i}");
+        var resultByKey = results.GroupBy(r => r.Chat.Key).ToDictionary(g => g.Key, g => g.Last());
         foreach (var v in verifications.Where(v => !v.Ok))
-            critical.Add($"{v.Title}: backup not verified, chat NOT purged ({string.Join("; ", v.Problems.Take(3))})");
+        {
+            if (v.VerifiedIds.Count == 0)
+                critical.Add($"{v.Title}: backup not verified, chat NOT purged");
+            else
+            {
+                // The outcome is what the purge measured, not what verification allowed.
+                var outcome = !resultByKey.TryGetValue(v.Key, out var pr) ? "the chat was not purged"
+                    : dryRun ? $"{pr.Remaining.Count} message(s) would be deleted"
+                    : $"{pr.Deleted} message(s) were deleted";
+                var kept = v.Unverified > 0 ? $"; {v.Unverified} backed-up message(s) that did not verify stay on Telegram" : "";
+                critical.Add($"{v.Title}: backup only partly verified ({v.VerifiedIds.Count} of {v.BackedUp} backed-up message(s) verified); {outcome}{kept}");
+            }
+            // Chat-level problems are listed in full: they are how unread or untrusted messages become visible.
+            foreach (var p in v.ChatProblems) critical.Add($"{v.Title}: {p}");
+            if (v.MessageProblems.Count > 0)
+                critical.Add($"{v.Title}: {v.MessageProblems.Count} message problem(s), listed under \"Backup problems\" below");
+        }
         foreach (var r in results)
         {
             var t = r.Chat.Title;
             if (!dryRun && r.Remaining.Count > 0)
                 critical.Add($"{t}: {r.Remaining.Count} in-scope message(s) before the cut-off are STILL on Telegram (ids {Ids(r.Remaining)})");
             if (r.NotBackedUp.Count > 0)
-                critical.Add($"{t}: {r.NotBackedUp.Count} message(s) appeared that are not in the verified backup and were NOT deleted (ids {Ids(r.NotBackedUp)})");
+                critical.Add($"{t}: {r.NotBackedUp.Count} message(s) are not in the verified backup (their backup failed or they were not read) and were NOT deleted (ids {Ids(r.NotBackedUp)})");
             if (r.BeyondRevokeWindow.Count > 0)
                 critical.Add($"{t}: {r.BeyondRevokeWindow.Count} message(s) are older than Telegram's delete-for-everyone window; they were NOT deleted because that would only remove them for you (ids {Ids(r.BeyondRevokeWindow)})");
-            foreach (var e in r.Errors.Take(5)) critical.Add($"{t}: {e}");
+            // Errors about the chat (e.g. a short checking read) always; per-message delete errors capped, their ids are listed above.
+            foreach (var e in r.Errors.Where(e => !e.StartsWith("message #", StringComparison.Ordinal))) critical.Add($"{t}: {e}");
+            var perMessage = r.Errors.Where(e => e.StartsWith("message #", StringComparison.Ordinal)).ToList();
+            foreach (var e in perMessage.Take(5)) critical.Add($"{t}: {e}");
+            if (perMessage.Count > 5) critical.Add($"{t}: … and {perMessage.Count - 5} more message deletion error(s)");
         }
 
         sb.AppendLine("## CRITICAL");
@@ -57,6 +80,22 @@ public static class Report
                 : $"| {Cell(r.Chat.Title)} | {r.Chat.KindLabel} | {scope} | {r.Deleted} | {r.Remaining.Count} | {Others(r)} |");
         }
         sb.AppendLine();
+
+        var withMessageProblems = verifications.Where(v => v.MessageProblems.Count > 0).ToList();
+        if (withMessageProblems.Count > 0)
+        {
+            sb.AppendLine("## Backup problems");
+            sb.AppendLine();
+            sb.AppendLine("_None of these messages was deleted; they are still on Telegram._");
+            sb.AppendLine();
+            foreach (var v in withMessageProblems)
+            {
+                sb.AppendLine($"### {v.Title}");
+                sb.AppendLine();
+                foreach (var p in v.MessageProblems) sb.AppendLine($"- {p}");
+                sb.AppendLine();
+            }
+        }
 
         if (skipped.Count > 0)
         {

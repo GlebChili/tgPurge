@@ -32,7 +32,7 @@ public sealed class BackupRunner(ITelegramApi api, TargetDiscovery dir, BackupSt
         };
         var chatDir = store.ChatDir(chat);
         var writer = new ChatBackupWriter(store, chat);
-        int mediaDone = 0;
+        int mediaDone = 0, read = 0;
         int? revokeWindow = PurgeRule.RevokeWindowFor(info.Kind, tlConfig);
         var now = DateTime.UtcNow;
         bool Purgeable(MessageBase m) =>
@@ -46,6 +46,7 @@ public sealed class BackupRunner(ITelegramApi api, TargetDiscovery dir, BackupSt
         // however large the chat is.
         async Task OnPage(IReadOnlyList<MessageBase> page)
         {
+            read += page.Count;
             // Only what this run deletes is backed up; everything else is skipped without touching the disk.
             var kept = page.Where(Purgeable).ToList();
             if (kept.Count == 0) return;
@@ -81,9 +82,10 @@ public sealed class BackupRunner(ITelegramApi api, TargetDiscovery dir, BackupSt
         }
         catch (Exception ex) when (ex is not BackupStorageException)
         {
-            // Keep what was saved; the recorded error makes this chat fail verification, so it is not purged.
+            // Keep what was saved: those messages can still be verified and purged; the recorded error marks the chat incomplete.
             Status.EndProgress();
             Status.Warn($"    could not read the whole history of \"{info.Title}\": {ex.Message}");
+            chat.MessagesScanned = read; // what was read before the failure, so the verifier can still compare
             chat.Errors.Add($"could not fetch history: {ex.Message}");
         }
 

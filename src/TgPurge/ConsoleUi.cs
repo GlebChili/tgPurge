@@ -189,9 +189,11 @@ public static class ConsoleUi
                Groups that were upgraded to supergroups are covered including their history from before the upgrade.
 
                Deletion happens only after the backup has been re-read from disk and verified (message counts,
-               Markdown completeness, file sizes and SHA-256 checksums). A chat whose backup does not fully verify is
-               NOT purged at all — even a single media file that failed to download keeps that whole chat on Telegram.
-               Such chats are listed as CRITICAL in the report; re-run the tool to retry them.
+               Markdown completeness, file sizes and SHA-256 checksums), and it is decided MESSAGE BY MESSAGE: a
+               message is deleted only if its own backup verified (its record, its Markdown entry and its file).
+               A chat can therefore be purged PARTLY: if one media file failed to download, that one message stays on
+               Telegram while the rest of the chat is deleted. Whatever could not be backed up, could not be read, or
+               could not be deleted is left in place and listed as CRITICAL in the report; re-run the tool to retry it.
 
             3. THIS IS IRRECOVERABLE
                Telegram has no recycle bin. Deleted messages are removed from Telegram's servers, and Telegram apps

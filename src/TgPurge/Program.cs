@@ -283,9 +283,14 @@ static class App
             if (v.Ok) ConsoleUi.Color($"  ✓ {v.Title}: {v.VerifiedIds.Count} messages verified", ConsoleColor.Green);
             else
             {
-                ConsoleUi.Color($"  ✗ {v.Title}: backup NOT verified — this chat will NOT be purged", ConsoleColor.Red);
-                foreach (var p in v.Problems.Take(10)) Status.Info($"      - {p}");
-                if (v.Problems.Count > 10) Status.Info($"      … and {v.Problems.Count - 10} more");
+                ConsoleUi.Color(v.VerifiedIds.Count > 0
+                    ? $"  ✗ {v.Title}: backup only PARTLY verified — only its {v.VerifiedIds.Count} verified message(s) " +
+                      $"{(opts.DryRun ? "would be" : "will be")} deleted; {v.Unverified} that did not verify, and anything not read, stay on Telegram"
+                    : $"  ✗ {v.Title}: backup NOT verified — nothing in this chat {(opts.DryRun ? "would be" : "will be")} deleted", ConsoleColor.Red);
+                // Chat-level problems are always shown in full; per-message ones are capped (the report lists them too).
+                foreach (var p in v.ChatProblems) Status.Info($"      - {p}");
+                foreach (var p in v.MessageProblems.Take(10)) Status.Info($"      - {p}");
+                if (v.MessageProblems.Count > 10) Status.Info($"      … and {v.MessageProblems.Count - 10} more message problem(s)");
             }
         }
         int failedVerifications = verifications.Count(v => !v.Ok);
@@ -305,7 +310,8 @@ static class App
             var info = target.Info;
             if (excluded.Contains(info.Key)) { skipped.Add((info, "exception requested by you")); continue; }
             if (info.Scope == DeleteScope.None) { skipped.Add((info, "nothing of yours to delete")); continue; }
-            if (!verifiedByKey.TryGetValue(info.Key, out var ver) || !ver.Ok)
+            // Each message is deleted only if its own backup verified; a chat with problems is purged partly.
+            if (!verifiedByKey.TryGetValue(info.Key, out var ver) || (!ver.Ok && ver.VerifiedIds.Count == 0))
             {
                 skipped.Add((info, "BACKUP NOT VERIFIED — not purged"));
                 continue;

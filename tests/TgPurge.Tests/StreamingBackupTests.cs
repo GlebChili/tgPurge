@@ -93,6 +93,7 @@ public sealed class StreamingBackupTests : IDisposable
         Assert.False(v.Ok);
         Assert.Contains(v.Problems, p => p.Contains("history-0003.md missing"));
         Assert.Contains(v.Problems, p => p.Contains("#5 missing from the Markdown history"));
+        Assert.Equal(new HashSet<int> { 1, 2 }, v.VerifiedIds.ToHashSet()); // parts 2 and 3 are not trusted
     }
 
     [Fact]
@@ -166,7 +167,9 @@ public sealed class StreamingBackupTests : IDisposable
         var rec = _store.ReadMessages(chat).Single();
         Assert.Equal(MediaStatus.Failed, rec.MediaStatus);
         Assert.Contains("stalled", rec.MediaError);
-        Assert.False(Verify(chat).Ok); // so the chat is not purged
+        var v = Verify(chat);
+        Assert.False(v.Ok);
+        Assert.Empty(v.VerifiedIds); // so this message is not deleted
         Assert.Equal(4, tg.AbortedDcs.Count); // every attempt was aborted
     }
 

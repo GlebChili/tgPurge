@@ -217,6 +217,23 @@ public sealed class ReadOptimizationTests : IDisposable
         Assert.False(r.Complete);
     }
 
+    [Fact]
+    public async Task A_partly_verified_backup_deletes_only_the_verified_messages_and_reports_the_rest()
+    {
+        // Messages 1..10 are before the cut-off; #4 and #7 failed to back up, so they are not in the verified set.
+        _tg.History["user:5"] = Timeline(total: 12, before: 10);
+        var (read, _) = await History.ScanAsync(_tg, Private(5), _dir);
+        var verified = read.Where(m => m.DateUtc < Cutoff && m.Id is not (4 or 7)).ToList();
+
+        var r = await new Purger(_tg, _dir, Unlimited, _ => { }).PurgeAsync(Private(5), verified, Cutoff, dryRun: false);
+
+        Assert.Equal([1, 2, 3, 5, 6, 8, 9, 10], _tg.Deletions.SelectMany(d => d.Ids).Order());
+        Assert.Equal(8, r.Deleted);
+        Assert.Equal([4, 7], r.NotBackedUp);
+        Assert.Empty(r.Remaining);
+        Assert.False(r.Complete); // the chat is reported, never passed as clean
+    }
+
     // ---- Discovery -------------------------------------------------------------------------------------------
 
     [Fact]

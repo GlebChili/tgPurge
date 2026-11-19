@@ -101,7 +101,7 @@ public sealed class Purger(ITelegramApi api, TargetDiscovery dir, TL.Config tlCo
             result.Remaining.Clear();
             result.Remaining.AddRange(plan.ToDelete.Union(finalPlan.ToDelete).Order());
         }
-        result.NotBackedUp.AddRange(finalPlan.NotBackedUp);
+        result.NotBackedUp.AddRange(finalPlan.NotBackedUp.Order());
         result.BeyondRevokeWindow.AddRange(plan.BeyondRevokeWindow.Union(finalPlan.BeyondRevokeWindow).Order());
         result.OthersLeftNoPermission = OthersCount(target, finalPlan);
         return result;

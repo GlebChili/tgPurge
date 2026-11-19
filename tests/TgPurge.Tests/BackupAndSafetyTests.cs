@@ -63,31 +63,37 @@ public sealed class BackupVerifierTests : IDisposable
     }
 
     [Fact]
-    public void Corrupted_media_fails_verification()
+    public void Corrupted_media_keeps_only_its_message()
     {
         Write();
         File.WriteAllBytes(Path.Combine(_store.ChatDir(_chat), "media", "2_photo.jpg"), [9, 9, 9, 9, 9]);
         var v = VerifyOnly();
         Assert.False(v.Ok);
-        Assert.Empty(v.VerifiedIds);
+        Assert.Equal(new HashSet<int> { 1, 3 }, v.VerifiedIds.ToHashSet()); // the others can still be deleted
+        Assert.Equal(1, v.Unverified);
         Assert.Contains(v.Problems, p => p.Contains("checksum"));
     }
 
     [Fact]
-    public void Missing_media_fails_verification()
+    public void Missing_media_keeps_only_its_message()
     {
         Write();
         File.Delete(Path.Combine(_store.ChatDir(_chat), "media", "2_photo.jpg"));
-        Assert.False(VerifyOnly().Ok);
+        var v = VerifyOnly();
+        Assert.False(v.Ok);
+        Assert.DoesNotContain(2, v.VerifiedIds);
+        Assert.Equal(2, v.VerifiedIds.Count);
     }
 
     [Fact]
-    public void Failed_media_download_fails_verification()
+    public void Failed_media_download_keeps_only_its_message()
     {
         _messages[1].MediaStatus = MediaStatus.Failed;
         _messages[1].MediaError = "boom";
         Write();
-        Assert.False(VerifyOnly().Ok);
+        var v = VerifyOnly();
+        Assert.False(v.Ok);
+        Assert.Equal(new HashSet<int> { 1, 3 }, v.VerifiedIds.ToHashSet());
     }
 
     [Fact]
@@ -98,6 +104,7 @@ public sealed class BackupVerifierTests : IDisposable
         File.WriteAllText(md, File.ReadAllText(md).Replace(MarkdownRenderer.Anchor(3), ""));
         var v = VerifyOnly();
         Assert.False(v.Ok);
+        Assert.Empty(v.VerifiedIds); // the whole altered file is distrusted, not just the entry that went missing
         Assert.Contains(v.Problems, p => p.Contains("#3"));
     }
 
@@ -121,6 +128,7 @@ public sealed class BackupVerifierTests : IDisposable
         var v = VerifyOnly();
         Assert.False(v.Ok);
         Assert.Contains(v.Problems, p => p.Contains("#3"));
+        Assert.Equal(new HashSet<int> { 1, 2 }, v.VerifiedIds.ToHashSet());
     }
 
     [Fact]
@@ -138,19 +146,68 @@ public sealed class BackupVerifierTests : IDisposable
     }
 
     [Fact]
-    public void Fewer_messages_than_telegram_reported_fails_verification()
+    public void Fewer_messages_than_telegram_reported_is_a_problem_but_what_was_saved_verifies()
     {
         _chat.ServerReportedCount = 10;
         Write();
-        Assert.False(VerifyOnly().Ok);
+        var v = VerifyOnly();
+        Assert.False(v.Ok);
+        Assert.Equal(3, v.VerifiedIds.Count);
     }
 
     [Fact]
-    public void Backup_errors_fail_verification()
+    public void Backup_errors_are_a_problem_but_what_was_saved_verifies()
     {
         _chat.Errors.Add("could not fetch history");
         Write();
-        Assert.False(VerifyOnly().Ok);
+        var v = VerifyOnly();
+        Assert.False(v.Ok);
+        Assert.Equal(3, v.VerifiedIds.Count);
+    }
+
+    [Fact]
+    public void An_altered_messages_file_verifies_nothing()
+    {
+        Write();
+        File.AppendAllText(Path.Combine(_store.ChatDir(_chat), BackupStore.MessagesFile), " ");
+        var v = VerifyOnly();
+        Assert.False(v.Ok);
+        Assert.Empty(v.VerifiedIds);
+    }
+
+    [Fact]
+    public void A_backup_holding_more_than_was_read_verifies_nothing()
+    {
+        _chat.MessagesScanned = 2;
+        Write();
+        var v = VerifyOnly();
+        Assert.Empty(v.VerifiedIds);
+        Assert.Contains(v.ChatProblems, p => p.Contains("backup inconsistent") && p.Contains("only 2 were read"));
+    }
+
+    [Fact]
+    public void A_manifest_count_that_disagrees_with_the_files_verifies_nothing()
+    {
+        Write();
+        _chat.MessageCount = 4;
+        _store.WriteManifest(new BackupManifest { Chats = [_chat] });
+        var v = VerifyOnly();
+        Assert.Empty(v.VerifiedIds);
+        Assert.Contains(v.ChatProblems, p => p.Contains("backup inconsistent"));
+    }
+
+    [Fact]
+    public void Chat_level_problems_come_before_message_problems_and_name_what_was_not_read()
+    {
+        _chat.ServerReportedCount = 10;
+        _messages[1].MediaStatus = MediaStatus.Failed;
+        _messages[1].MediaError = "boom";
+        Write();
+        var v = VerifyOnly();
+        Assert.Equal([1, 3], v.VerifiedIds.Order());
+        Assert.Contains("7 message(s) were not read", Assert.Single(v.ChatProblems));
+        Assert.Contains("#2", Assert.Single(v.MessageProblems));
+        Assert.StartsWith("Telegram reported", v.Problems[0]);
     }
 
     [Fact]
@@ -196,7 +253,7 @@ public class DisclaimerTests
         Assert.Contains("NOT DONE BY THIS TOOL", text);
         Assert.Contains("only for me", text);
         Assert.Contains("before the upgrade", text);
-        Assert.Contains("single media file", text);
+        Assert.Contains("MESSAGE BY MESSAGE", text);
         Assert.DoesNotContain("does not expose these to any client", text);
         Assert.DoesNotContain("from every\n", text);
     }

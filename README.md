@@ -123,8 +123,15 @@ or paste a login code into any chat — Telegram cancels codes that have been sh
 5. **Verify** (re-read from disk, streamed, per chat): manifest, SHA-256 of `messages.jsonl` and of every history
    part, every message present exactly once in the Markdown, every media file present, non-empty, with the
    recorded size and SHA-256 and, for documents, the size Telegram declared (Telegram declares no size for photos), no failed downloads, and no fewer messages than Telegram reported.
-   **Chats that fail verification are not purged.**
-6. **Purge** each verified chat:
+   Verification decides **message by message**: a message can be deleted only if its own record, Markdown entry and
+   media file verified. A problem with one message (a failed or corrupted download, a missing Markdown entry) keeps
+   only that message on Telegram; the rest of the chat is still purged. A history read that stopped early or came up
+   short does not hold back messages that were saved and verified; what was not read stays on Telegram and the chat
+   is reported as incomplete. Nothing in a chat is deleted if its `messages.jsonl` is missing, unreadable or altered,
+   or if the backup's own files disagree (counts in the manifest, `messages.jsonl` and the Markdown, or more messages
+   saved than were read): no correct run produces that, and deletion in private chats and basic groups names only
+   message ids, not the chat, so a mixed-up backup must never be acted on.
+6. **Purge** each chat with verified messages:
 
    | chat | deleted | API |
    |---|---|---|
@@ -193,7 +200,7 @@ Everything the tool does is reported on stdout, each line stamped with the clock
 - Before each page of 100 messages is saved, that page's media size is estimated, and every file is checked against
   free space (keeping a 256 MB reserve) before download, so the tool stops before the disk is actually full.
 - Any write failure (no space, quota, permissions) stops the backup at once with a clear message and exit code `4`.
-  **Nothing is deleted**, because deletion only starts after the complete backup has been verified.
+  **Nothing is deleted**, because the run stops before the verification and deletion steps.
 - Files are written to a temporary name and renamed, so a failed write never leaves a truncated `history.md` or media file.
 - The final report is printed before it is saved; if saving fails, the on-screen copy is all you get, but the run still completes.
 - The MTProto debug log silently stops on a write error, so a full disk can't break the Telegram connection mid-purge.
