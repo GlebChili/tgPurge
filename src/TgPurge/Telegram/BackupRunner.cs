@@ -73,7 +73,7 @@ public sealed class BackupRunner(ITelegramApi api, TargetDiscovery dir, BackupSt
         try
         {
             var stats = await History.StreamAsync(api, target, dir, OnPage,
-                n => Status.Progress($"    {n} messages read, {writer.Count} to back up…"));
+                n => Status.Progress($"    {n} messages read, {writer.Count} to back up…"), History.ReadMode.Full);
             chat.MessagesScanned = stats.Fetched;
             chat.ServerReportedCount = stats.ReportedCount;
             chat.ServerCountInexact = stats.Inexact;

@@ -119,6 +119,15 @@ static class App
         }
     }
 
+    /// <summary>The verified messages of one chat as recorded in its backup (id, date, whether it is the user's).</summary>
+    static List<ServerMessage> BackedUpMessages(BackupStore store, BackupManifest manifest, ChatKey key, IReadOnlySet<int> verifiedIds)
+    {
+        var chat = manifest.Chats.FirstOrDefault(c => c.Key == key);
+        if (chat is null) return [];
+        return store.ReadMessages(chat).Where(m => verifiedIds.Contains(m.Id))
+            .Select(m => new ServerMessage(m.Id, DateTime.SpecifyKind(m.DateUtc, DateTimeKind.Utc), m.IsOwn)).ToList();
+    }
+
     static async Task<User> LoginAsync(Client client, Options opts)
     {
         await client.ConnectAsync();
@@ -305,7 +314,7 @@ static class App
             Status.Info($"  {info.KindLabel} \"{info.Title}\" ({(info.Scope == DeleteScope.Everyone ? "all messages" : "your messages only")})");
             try
             {
-                var r = await purger.PurgeAsync(target, ver.VerifiedIds, cutoff, opts.DryRun);
+                var r = await purger.PurgeAsync(target, BackedUpMessages(store, manifest, info.Key, ver.VerifiedIds), cutoff, opts.DryRun);
                 results.Add(r);
                 Status.Info(opts.DryRun
                     ? $"    would delete {r.Remaining.Count} messages"

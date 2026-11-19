@@ -53,8 +53,8 @@ public static class Report
         {
             var scope = r.Chat.Scope == DeleteScope.Everyone ? "all, both sides" : "own only";
             sb.AppendLine(dryRun
-                ? $"| {Cell(r.Chat.Title)} | {r.Chat.KindLabel} | {scope} | {r.Remaining.Count} | {r.OthersLeftNoPermission} |"
-                : $"| {Cell(r.Chat.Title)} | {r.Chat.KindLabel} | {scope} | {r.Deleted} | {r.Remaining.Count} | {r.OthersLeftNoPermission} |");
+                ? $"| {Cell(r.Chat.Title)} | {r.Chat.KindLabel} | {scope} | {r.Remaining.Count} | {Others(r)} |"
+                : $"| {Cell(r.Chat.Title)} | {r.Chat.KindLabel} | {scope} | {r.Deleted} | {r.Remaining.Count} | {Others(r)} |");
         }
         sb.AppendLine();
 
@@ -111,4 +111,7 @@ public static class Report
     }
 
     static string Cell(string s) => s.Replace("|", "\\|");
+
+    // In groups where only your messages can be deleted, only yours are read, so others' are not counted.
+    static string Others(Telegram.ChatPurgeResult r) => r.OthersLeftNoPermission?.ToString() ?? "not read";
 }

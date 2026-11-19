@@ -49,8 +49,13 @@ public sealed class FakeTelegram : ITelegramApi
         message = text,
     };
 
-    public Task<Messages_Dialogs> GetAllDialogsAsync(int? folderId) =>
-        Task.FromResult(folderId == 1 ? ArchivedDialogs : folderId == 0 ? Dialogs : Merge(Dialogs, ArchivedDialogs));
+    public List<int?> DialogFolders { get; } = [];
+
+    public Task<Messages_Dialogs> GetAllDialogsAsync(int? folderId)
+    {
+        DialogFolders.Add(folderId);
+        return Task.FromResult(folderId == 1 ? ArchivedDialogs : folderId == 0 ? Dialogs : Merge(Dialogs, ArchivedDialogs));
+    }
 
     static Messages_Dialogs Merge(Messages_Dialogs a, Messages_Dialogs b) => new()
     {
@@ -68,26 +73,54 @@ public sealed class FakeTelegram : ITelegramApi
     public Task<Messages_Chats> GetChatsAsync(long chatId) =>
         Task.FromResult(new Messages_Chats { chats = ExtraChats.Where(kv => kv.Key == chatId).ToDictionary() });
 
-    public Task<Messages_MessagesBase> GetHistoryAsync(InputPeer peer, int offsetId, int limit)
+    /// <summary>Whether date-positioned history answers leave out offset_id_offset (Telegram does not promise it).</summary>
+    public bool OmitOffsetPosition { get; set; }
+    public List<(InputPeer From, DateTime? MaxDate)> SearchCalls { get; } = [];
+    public List<DateTime?> HistoryDates { get; } = [];
+
+    public Task<Messages_MessagesBase> GetHistoryAsync(InputPeer peer, int offsetId, int limit, DateTime? offsetDate)
     {
         var key = KeyOf(peer);
         HistoryCalls.Add(offsetId);
+        HistoryDates.Add(offsetDate);
         if (offsetId == 0) _scans[key] = _scans.GetValueOrDefault(key) + 1; // a new full scan starts at offset 0
         bool firstScan = _scans.GetValueOrDefault(key) <= 1;
         var all = History.GetValueOrDefault(key) ?? [];
         var visible = all.Where(m => !(firstScan && HiddenOnFirstScan.Contains(m.ID))).OrderByDescending(m => m.ID).ToList();
         int reported = visible.Count;
+        // Like Telegram, offset_date starts at the newest message sent strictly before it; ids then continue the paging.
+        int newer = offsetDate is DateTime d ? visible.Count(m => m.Date >= d) : 0;
         visible.RemoveAll(m => CountedButNeverReturned.Contains(m.ID));
-        var page = visible.Where(m => offsetId == 0 || m.ID < offsetId).Take(limit).ToArray();
-        return Task.FromResult(Wrap(key, page, reported, limit));
+        var page = visible
+            .Where(m => offsetDate is not DateTime od || m.Date < od)
+            .Where(m => offsetId == 0 || m.ID < offsetId).Take(limit).ToArray();
+        var res = Wrap(key, page, reported, limit);
+        if (offsetDate is not null && !OmitOffsetPosition)
+            switch (res)
+            {
+                case Messages_ChannelMessages cm:
+                    cm.offset_id_offset = newer; cm.flags |= Messages_ChannelMessages.Flags.has_offset_id_offset; break;
+                case Messages_MessagesSlice ms:
+                    ms.offset_id_offset = newer; ms.flags |= Messages_MessagesSlice.Flags.has_offset_id_offset; break;
+            }
+        return Task.FromResult(res);
     }
 
-    public Task<Messages_MessagesBase> SearchOwnAsync(InputPeer peer, int offsetId, int limit)
+    public Task<Messages_MessagesBase> SearchFromAsync(InputPeer peer, InputPeer from, int offsetId, int limit, DateTime? maxDate)
     {
         var key = KeyOf(peer);
-        var own = (History.GetValueOrDefault(key) ?? []).Where(Telegram.History.IsOwn).OrderByDescending(m => m.ID).ToList();
-        var page = own.Where(m => offsetId == 0 || m.ID < offsetId).Take(limit).ToArray();
-        return Task.FromResult(Wrap(key, page, own.Count, limit));
+        SearchCalls.Add((from, maxDate));
+        bool BySender(MessageBase m) => from switch
+        {
+            InputPeerSelf => Telegram.History.IsOwn(m) && m.From is not PeerChannel,
+            InputPeerChannel ch => m.From is PeerChannel pc && pc.channel_id == ch.channel_id,
+            _ => false,
+        };
+        var hits = (History.GetValueOrDefault(key) ?? [])
+            .Where(BySender).Where(m => maxDate is not DateTime md || m.Date < md) // Telegram: "smaller than"
+            .OrderByDescending(m => m.ID).ToList();
+        var page = hits.Where(m => offsetId == 0 || m.ID < offsetId).Take(limit).ToArray();
+        return Task.FromResult(Wrap(key, page, hits.Count, limit));
     }
 
     static Messages_MessagesBase Wrap(string key, MessageBase[] page, int total, int limit)

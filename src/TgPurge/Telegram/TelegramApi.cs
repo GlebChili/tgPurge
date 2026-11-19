@@ -13,10 +13,13 @@ public interface ITelegramApi
     Task<Messages_Dialogs> GetAllDialogsAsync(int? folderId);
     Task<Messages_ChatFull> GetFullChannelAsync(Channel channel);
     Task<Messages_Chats> GetChatsAsync(long chatId);
-    /// <summary>One page of history, newest first, of messages with id &lt; <paramref name="offsetId"/> (0 = from the newest).</summary>
-    Task<Messages_MessagesBase> GetHistoryAsync(InputPeer peer, int offsetId, int limit);
-    /// <summary>One page of the authenticated user's own messages in a chat (server-side search by sender).</summary>
-    Task<Messages_MessagesBase> SearchOwnAsync(InputPeer peer, int offsetId, int limit);
+    /// <summary>
+    /// One page of history, newest first, of messages with id &lt; <paramref name="offsetId"/> (0 = from the newest),
+    /// or, with <paramref name="offsetDate"/>, starting at the newest message sent before that moment.
+    /// </summary>
+    Task<Messages_MessagesBase> GetHistoryAsync(InputPeer peer, int offsetId, int limit, DateTime? offsetDate);
+    /// <summary>One page of the messages sent by <paramref name="from"/> in a chat (server-side search), optionally only up to <paramref name="maxDate"/>.</summary>
+    Task<Messages_MessagesBase> SearchFromAsync(InputPeer peer, InputPeer from, int offsetId, int limit, DateTime? maxDate);
     /// <summary>Messages by id; deleted ones come back as <see cref="MessageEmpty"/>.</summary>
     Task<Messages_MessagesBase> GetMessagesAsync(InputChannelBase? channel, int[] ids);
     Task<Storage_FileType> DownloadPhotoAsync(Photo photo, Stream output, Client.ProgressCallback progress);
@@ -45,11 +48,11 @@ public sealed class TelegramApi(Client client) : ITelegramApi
 
     public Task<Messages_Chats> GetChatsAsync(long chatId) => client.Messages_GetChats(chatId);
 
-    public Task<Messages_MessagesBase> GetHistoryAsync(InputPeer peer, int offsetId, int limit) =>
-        client.Messages_GetHistory(peer, offset_id: offsetId, limit: limit);
+    public Task<Messages_MessagesBase> GetHistoryAsync(InputPeer peer, int offsetId, int limit, DateTime? offsetDate) =>
+        client.Messages_GetHistory(peer, offset_id: offsetId, offset_date: offsetDate ?? default, limit: limit);
 
-    public Task<Messages_MessagesBase> SearchOwnAsync(InputPeer peer, int offsetId, int limit) =>
-        client.Messages_Search(peer, null, null, offset_id: offsetId, limit: limit, from_id: InputPeer.Self);
+    public Task<Messages_MessagesBase> SearchFromAsync(InputPeer peer, InputPeer from, int offsetId, int limit, DateTime? maxDate) =>
+        client.Messages_Search(peer, null, null, max_date: maxDate ?? default, offset_id: offsetId, limit: limit, from_id: from);
 
     public Task<Messages_MessagesBase> GetMessagesAsync(InputChannelBase? channel, int[] ids)
     {

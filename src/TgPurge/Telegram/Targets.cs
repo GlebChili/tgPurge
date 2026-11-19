@@ -13,6 +13,8 @@ public sealed class TargetDiscovery
     public List<string> Inaccessible { get; } = [];
     public Dictionary<long, User> Users { get; } = [];
     public Dictionary<long, ChatBase> Chats { get; } = [];
+    /// <summary>Channels the user owns: Telegram lets members post in groups "as" such a channel.</summary>
+    public List<Channel> SendAsChannels { get; } = [];
 }
 
 public static class TargetEnumerator
@@ -35,7 +37,7 @@ public static class TargetEnumerator
             if (key.Item1 != "?" && seen.Add(key)) peers.Add(p);
         }
 
-        // Main list and the Archive folder are fetched separately so archived chats are never missed.
+        // All dialogs, then the main list and the Archive folder separately, so no chat is missed if one listing stops early.
         foreach (int? folder in new int?[] { null, 0, 1 })
         {
             progress(folder switch { null => "Fetching all dialogs…", 0 => "Fetching main chat list…", _ => "Fetching archived chats…" });
@@ -72,6 +74,7 @@ public static class TargetEnumerator
                     if (cb is Channel channel)
                     {
                         result.Targets.Add(ChannelTarget(channel));
+                        if (channel.IsChannel && channel.flags.HasFlag(Channel.Flags.creator)) result.SendAsChannels.Add(channel);
                         channelsToInspect.Add(channel);
                     }
                     else result.Inaccessible.Add($"channel/supergroup \"{cb.Title}\" (id {cb.ID}): no access (removed or banned)");

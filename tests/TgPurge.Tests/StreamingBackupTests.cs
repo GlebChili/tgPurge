@@ -192,7 +192,7 @@ public sealed class StreamingBackupTests : IDisposable
 
         // Own messages are the even ids; before the cut-off are days 0..9, i.e. ids 1..10.
         Assert.Equal([2, 4, 6, 8, 10], _store.ReadMessages(chat).Select(m => m.Id));
-        Assert.Equal(20, chat.MessagesScanned);
+        Assert.Equal(20, chat.MessagesScanned); // the backup reads every message, then keeps only yours
         Assert.Empty(Directory.GetFiles(Path.Combine(_store.ChatDir(chat), BackupStore.MediaDir))); // others' photos never downloaded
         var md = File.ReadAllText(Path.Combine(_store.ChatDir(chat), BackupStore.HistoryFile));
         Assert.DoesNotContain("> text 1\n", md.Replace("\r", ""));
@@ -213,7 +213,7 @@ public sealed class StreamingBackupTests : IDisposable
         var chat = await new BackupRunner(tg, new TargetDiscovery(), _store, Unlimited, _ => { }).BackupChatAsync(target, DateTime.UtcNow, cutoff);
 
         Assert.Equal([1, 2, 3, 4, 5], _store.ReadMessages(chat).Select(m => m.Id)); // yours and Bob's
-        Assert.Equal(8, chat.MessagesScanned);
+        Assert.Equal(8, chat.MessagesScanned); // the backup reads the whole history, then keeps what is before the cut-off
         Assert.True(Verify(chat).Ok);
     }
 

@@ -61,23 +61,24 @@ public sealed class TelegramLogicTests : IDisposable
 
     // ---- Purge -----------------------------------------------------------------------------------------------
 
-    static HashSet<int> All(IEnumerable<MessageBase> m) => m.Select(x => x.ID).ToHashSet();
+    /// <summary>The backup of these messages, as the purge receives it (only what may be deleted is ever backed up).</summary>
+    static List<ServerMessage> All(IEnumerable<MessageBase> m) => m.Select(History.ToServerMessage).ToList();
 
     [Fact]
     public async Task Purge_is_incomplete_when_the_final_reread_is_short()
     {
-        // Telegram counts 250 messages but never returns #120: the purge must not report the chat as clean.
+        // #120 is missing from the backup and Telegram counts it but never returns it: the checking read is short,
+        // and that error is the only signal that something may be left, so the chat must not be reported clean.
         var msgs = Messages(250);
         _tg.History["channel:9"] = msgs;
         _tg.CountedButNeverReturned.Add(120);
 
         var r = await new Purger(_tg, _dir, Unlimited, _ => { })
-            .PurgeAsync(Supergroup(9, DeleteScope.Everyone), All(msgs), Cutoff, dryRun: false);
+            .PurgeAsync(Supergroup(9, DeleteScope.Everyone), All(msgs.Where(m => m.ID != 120)), Cutoff, dryRun: false);
 
         Assert.False(r.Complete);
         Assert.Contains(r.Errors, e => e.StartsWith("final re-read:", StringComparison.Ordinal) && e.Contains("only 0 could be read"));
-        Assert.Contains(r.Errors, e => e.StartsWith("first scan:", StringComparison.Ordinal));
-        Assert.Empty(r.Remaining); // what was read is clean; the error is the only signal, so it must be there
+        Assert.Equal(249, r.Deleted);
     }
 
     [Fact]
@@ -115,7 +116,7 @@ public sealed class TelegramLogicTests : IDisposable
     public async Task Messages_not_in_verified_backup_are_never_deleted()
     {
         _tg.History["user:5"] = Messages(10);
-        var backup = Enumerable.Range(1, 7).ToHashSet();
+        var backup = All(_tg.History["user:5"].Where(m => m.ID <= 7));
 
         var r = await new Purger(_tg, _dir, Unlimited, _ => { }).PurgeAsync(Private(5), backup, Cutoff, dryRun: false);
 
@@ -136,20 +137,23 @@ public sealed class TelegramLogicTests : IDisposable
         var deleted = _tg.Deletions.SelectMany(d => d.Ids).ToList();
         Assert.All(deleted, id => Assert.True(id % 2 == 0, $"#{id} is someone else's message"));
         Assert.Equal(75, deleted.Count);
-        Assert.Equal(75, r.OthersLeftNoPermission);
+        Assert.Null(r.OthersLeftNoPermission);                  // others' messages are never read here
+        Assert.Empty(_tg.HistoryCalls);                         // found by searching for your messages instead
+        Assert.All(_tg.SearchCalls, c => Assert.Equal(Cutoff, c.MaxDate));
         Assert.All(_tg.Deletions, d => Assert.IsType<InputChannel>(d.Channel));
     }
 
     [Fact]
-    public async Task Final_full_rescan_catches_messages_the_first_scan_missed()
+    public async Task Final_check_reports_messages_the_backup_read_missed()
     {
         var msgs = Messages(20);
         _tg.History["user:5"] = msgs;
-        _tg.HiddenOnFirstScan.Add(4);
 
-        var r = await new Purger(_tg, _dir, Unlimited, _ => { }).PurgeAsync(Private(5), All(msgs), Cutoff, dryRun: false);
+        // The backup read missed #4: it is never deleted, but the checking read finds it and reports it.
+        var r = await new Purger(_tg, _dir, Unlimited, _ => { }).PurgeAsync(Private(5), All(msgs.Where(m => m.ID != 4)), Cutoff, dryRun: false);
 
-        Assert.Equal([4], r.Remaining);
+        Assert.Equal([4], r.NotBackedUp);
+        Assert.DoesNotContain(4, _tg.Deletions.SelectMany(d => d.Ids));
         Assert.False(r.Complete);
     }
 

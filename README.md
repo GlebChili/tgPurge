@@ -135,11 +135,14 @@ or paste a login code into any chat — Telegram cancels codes that have been sh
    | supergroup/channel without delete rights, comments groups | only your messages, for everyone | `channels.deleteMessages` |
    | channel you only follow | nothing (contains nothing of yours) | — |
 
-   Each chat is scanned once; your own messages are recognised by Telegram's "outgoing" flag on each message
-   (channel posts carry no sender, so a sender search would miss them). Only message ids that are in the verified
-   backup are deleted. Deletion is retried up to 3 passes, re-checking the planned messages by id, then the whole
-   chat is re-read from Telegram to confirm no in-scope message before the cut-off is left — including any the first
-   scan might have missed.
+   What to delete is planned from the verified backup, which came from a **full read** of the chat (every message,
+   your own recognised by Telegram's "outgoing" flag, which also covers posts made as an anonymous admin or as your
+   channel). Only message ids in the verified backup are ever deleted. Deletion is retried up to 3 passes, and every
+   planned message is then looked up by id to confirm it is gone. Finally a cheaper **checking read** looks for
+   anything in scope still there, including messages the backup read might have missed (reported, never deleted):
+   - it reads from the cut-off backwards, so newer messages are not fetched;
+   - in groups where you may delete only your own messages, it searches for messages sent by you, by the channels you
+     own (members can post "as" a channel) and, where you are an anonymous admin, by the group itself.
 7. **Report** printed and saved as `purge-report.md`; exit code `3` if anything in scope remains **or any chat
    could not be read or inspected** (such chats are listed as CRITICAL, never counted as done). A clean run ends with
    "no in-scope message … left in your account" — the tool can see only your side, so it never claims more.
@@ -223,6 +226,12 @@ Not possible for any tool:
 - bots: Telegram keeps no bot-side history, but the bot's owner may have logged what you sent.
 
 Also:
+- Each chat is read in full once (for the backup) and once more by the cheaper checking read after the purge. The
+  checking read locates the cut-off by date and Telegram's reported position; histories imported from other apps
+  (WhatsApp, etc.) can have old dates on new ids, so the checking read may not see such messages, but the full backup
+  read does, so they are backed up and deleted like any other. The position values are written to `mtproto.log`.
+- In groups where only your messages can be deleted, the purge report shows other people's messages as "not read":
+  the checking read does not download them, so they are not counted.
 - Flood limits: Telegram rate-limits history reads and deletes; the tool waits as long as Telegram requires.
   Large accounts can take hours.
 
